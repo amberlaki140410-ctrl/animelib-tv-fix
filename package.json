@@ -1,17 +1,11 @@
 {
-  "name": "animelib-tv-v2",
-  "appName": "AnimeLib V2",
-  "version": "0.1.2",
-  "description": "AnimeLib на Samsung TV: диагностика плеера, подмена user-agent и переключаемый курсор",
+  "name": "animelib-clean",
+  "appName": "AnimeLib Clean",
+  "version": "1.0.0",
+  "description": "AnimeLib с курсором",
   "packageType": "mods",
   "websiteURL": "https://animelib.org",
-  "main": "userScript_v2.js",
-  "keys": [
-    "MediaPlayPause",
-    "MediaPlay",
-    "MediaPause",
-    "MediaStop",
-    "ColorF2Yellow"
-  ],
+  "main": "userScript.js",
+  "keys": ["MediaPlayPause", "MediaPlay", "MediaPause", "MediaStop", "ColorF2Yellow"],
   "license": "MIT"
 }
