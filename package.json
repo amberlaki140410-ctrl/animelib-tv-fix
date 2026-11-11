@@ -5,7 +5,7 @@
   "description": "AnimeLib на Samsung TV: диагностика плеера, подмена user-agent и переключаемый курсор",
   "packageType": "mods",
   "websiteURL": "https://animelib.org",
-  "main": "userScript.js",
+  "main": "userScript_v2.js",
   "keys": [
     "MediaPlayPause",
     "MediaPlay",
