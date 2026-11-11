@@ -347,32 +347,33 @@
     };
   } catch (e) {}
 
-  // 6. Обработка кнопок пульта (переключение курсора и панели логов)
+ // 6. Обработка кнопок пульта
+  var okPressTimer = null;
+
   window.addEventListener("keydown", function (e) {
     var c = e.keyCode || e.which;
     var now = Date.now();
 
-    // Кнопка Play/Pause (10252 / 415 / 19):
-    // 1 нажатие = ВКЛ/ВЫКЛ курсор, 2 быстрых нажатия = скрыть/показать панель логов
+    // Записываем код нажатой клавиши в лог для проверки
+    log("Нажата кнопка: " + c);
+
+    // Включение/выключение курсора по кнопке Play/Pause (коды 10252, 415, 19)
     if (c === 10252 || c === 415 || c === 19) {
       e.preventDefault();
       e.stopPropagation();
-      if (now - lastToggleTap < 350) {
-        clearTimeout(toggleTapTimeout);
-        lastToggleTap = 0;
-        if (box) box.style.display = box.style.display === "none" ? "block" : "none";
-        showToast(box && box.style.display === "none" ? "Логи: СКРЫТЫ" : "Логи: ПОКАЗАНЫ");
-      } else {
-        lastToggleTap = now;
-        toggleTapTimeout = setTimeout(function () {
-          toggleCursorMode();
-        }, 350);
-      }
+      toggleCursorMode();
       return;
     }
 
-    // Жёлтая кнопка (405): показать или скрыть панель со статусом
-    if (c === 405 && box) {
+    // Дополнительный способ: удержание центральной кнопки OK (Enter, код 13) на 1.2 секунды
+    if (c === 13 && !okPressTimer && !cursorEnabled) {
+      okPressTimer = setTimeout(function () {
+        toggleCursorMode();
+      }, 1200);
+    }
+
+    // Скрытие/показ панели логов только по жёлтой кнопке (405) или Stop (413)
+    if ((c === 405 || c === 413) && box) {
       box.style.display = box.style.display === "none" ? "block" : "none";
       return;
     }
@@ -380,7 +381,7 @@
     // Если курсор выключен — работают стандартные стрелки Tizen
     if (!cursorEnabled) return;
 
-    // Если курсор включен — перехватываем стрелки и кнопку OK
+    // Если курсор включен — перехватываем стрелки и клик
     var boost = (now - lastMoveInput < 160) ? 1.45 : 1;
     if (c === 37 || c === 38 || c === 39 || c === 40) {
       e.preventDefault();
@@ -398,16 +399,9 @@
     }
   }, true);
 
-  requestAnimationFrame(physicsLoop);
-
-  log("animelib-tv-fix " + VERSION + " активен, UA: " + short(navigator.userAgent, 70));
-  log("экран " + screen.width + "x" + screen.height + ", MediaSource: " + !!window.MediaSource);
-
-  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", mount);
-  else mount();
-
-  setInterval(function () {
-    if (!document.body) return;
-    mount();
-  }, 2000);
-})();
+  window.addEventListener("keyup", function (e) {
+    if (e.keyCode === 13 && okPressTimer) {
+      clearTimeout(okPressTimer);
+      okPressTimer = null;
+    }
+  }, true);
