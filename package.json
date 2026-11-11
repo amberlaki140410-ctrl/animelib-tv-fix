@@ -1,6 +1,6 @@
 {
-  "name": "animelib-tv-fix",
-  "appName": "AnimeLib",
+  "name": "animelib-tv-v2",
+  "appName": "AnimeLib V2",
   "version": "0.1.2",
   "description": "AnimeLib на Samsung TV: диагностика плеера, подмена user-agent и переключаемый курсор",
   "packageType": "mods",
