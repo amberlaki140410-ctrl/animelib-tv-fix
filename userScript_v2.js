@@ -1,6 +1,6 @@
 // animelib-tv-fix 0.1.0: диагностика плеера AnimeLib на ТВ + подмена user-agent + переключаемый курсор.
-// Кнопка Play/Pause на пульте включает и выключает курсор (по умолчанию выключен).
-// Двойное нажатие Play/Pause или Жёлтая кнопка скрывает и показывает панель со статусом.
+// Кнопка Play/Pause (или удержание OK на 1.2 сек) включает и выключает курсор.
+// Жёлтая кнопка или Stop скрывает и показывает панель со статусом.
 (function () {
   "use strict";
 
@@ -58,7 +58,7 @@
   }
 
   // =========================================================================
-  // ВИРТУАЛЬНЫЙ КУРСОР В СТИЛЕ TIZEN BROWSER (ВКЛ/ВЫКЛ ПО PLAY/PAUSE)
+  // ВИРТУАЛЬНЫЙ КУРСОР В СТИЛЕ TIZEN BROWSER (ВКЛ/ВЫКЛ ПО PLAY/PAUSE ИЛИ OK)
   // =========================================================================
   var cursorEnabled = false;
   var cursorEl = null;
@@ -66,8 +66,6 @@
   var vx = 0, vy = 0;
   var isPointer = false;
   var lastMoveInput = 0;
-  var lastToggleTap = 0;
-  var toggleTapTimeout = null;
 
   var SVG_ARROW =
     '<svg width="36" height="36" viewBox="0 0 36 36" xmlns="http://www.w3.org/2000/svg">' +
@@ -125,21 +123,21 @@
         cursorEl.style.setProperty("transform", "translate3d(" + x + "px," + y + "px,0)", "important");
         cursorEl.style.setProperty("display", "block", "important");
       }
-      showToast("Курсор: ВКЛЮЧЕН (Play/Pause — выкл)");
+      showToast("Курсор: ВКЛЮЧЕН");
       log("курсор: ВКЛ");
     } else {
       if (cursorEl) {
         cursorEl.style.setProperty("display", "none", "important");
       }
-      showToast("Курсор: ВЫКЛЮЧЕН (Стандартный пульт)");
+      showToast("Курсор: ВЫКЛЮЧЕН");
       log("курсор: ВЫКЛ");
     }
   }
 
   function getTargetAt(cx, cy) {
-    if (cursorEl) cursorEl.style.setProperty("display", "none", "important");
+    if (cursorEl) cursorEl.style.display = "none";
     var el = document.elementFromPoint(cx, cy);
-    if (cursorEl && cursorEnabled) cursorEl.style.setProperty("display", "block", "important");
+    if (cursorEl && cursorEnabled) cursorEl.style.display = "block";
     return el;
   }
 
@@ -237,7 +235,7 @@
     }
   }
 
-  // 1. Подмена user-agent (до скриптов сайта, если TizenBrew внедряет код достаточно рано)
+  // 1. Подмена user-agent (до скриптов сайта)
   if (SPOOF_UA) {
     try {
       var UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
@@ -287,7 +285,7 @@
     }, true);
   });
 
-  // 4. Хуки: play(), video.src, canPlayType, MediaSource.isTypeSupported
+  // 4. Хуки
   try {
     var P = HTMLMediaElement.prototype;
     var seen = {};
@@ -347,17 +345,16 @@
     };
   } catch (e) {}
 
- // 6. Обработка кнопок пульта
+  // 6. Обработка кнопок пульта
   var okPressTimer = null;
 
   window.addEventListener("keydown", function (e) {
     var c = e.keyCode || e.which;
     var now = Date.now();
 
-    // Записываем код нажатой клавиши в лог для проверки
     log("Нажата кнопка: " + c);
 
-    // Включение/выключение курсора по кнопке Play/Pause (коды 10252, 415, 19)
+    // Play/Pause (10252, 415, 19)
     if (c === 10252 || c === 415 || c === 19) {
       e.preventDefault();
       e.stopPropagation();
@@ -365,23 +362,21 @@
       return;
     }
 
-    // Дополнительный способ: удержание центральной кнопки OK (Enter, код 13) на 1.2 секунды
+    // Удержание OK (13) на 1.2 секунды
     if (c === 13 && !okPressTimer && !cursorEnabled) {
       okPressTimer = setTimeout(function () {
         toggleCursorMode();
       }, 1200);
     }
 
-    // Скрытие/показ панели логов только по жёлтой кнопке (405) или Stop (413)
+    // Скрытие панели логов: Жёлтая кнопка (405) или Stop (413)
     if ((c === 405 || c === 413) && box) {
       box.style.display = box.style.display === "none" ? "block" : "none";
       return;
     }
 
-    // Если курсор выключен — работают стандартные стрелки Tizen
     if (!cursorEnabled) return;
 
-    // Если курсор включен — перехватываем стрелки и клик
     var boost = (now - lastMoveInput < 160) ? 1.45 : 1;
     if (c === 37 || c === 38 || c === 39 || c === 40) {
       e.preventDefault();
@@ -405,3 +400,17 @@
       okPressTimer = null;
     }
   }, true);
+
+  requestAnimationFrame(physicsLoop);
+
+  log("animelib-tv-fix " + VERSION + " активен, UA: " + short(navigator.userAgent, 70));
+  log("экран " + screen.width + "x" + screen.height + ", MediaSource: " + !!window.MediaSource);
+
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", mount);
+  else mount();
+
+  setInterval(function () {
+    if (!document.body) return;
+    mount();
+  }, 2000);
+})();
