@@ -1,8 +1,8 @@
 {
   "name": "animelib-tv-fix",
   "appName": "AnimeLib",
-  "version": "0.4.0",
-  "description": "AnimeLib на Samsung TV: диагностика плеера, подмена user-agent и курсор",
+  "version": "0.5.0",
+  "description": "AnimeLib на Samsung TV: курсор, управление как в родном браузере, адблок, диагностика",
   "packageType": "mods",
   "websiteURL": "https://animelib.org",
   "main": "userScript.js",
@@ -11,6 +11,12 @@
     "MediaPlay",
     "MediaPause",
     "MediaStop",
+    "MediaFastForward",
+    "MediaRewind",
+    "ChannelUp",
+    "ChannelDown",
+    "ColorF0Red",
+    "ColorF1Green",
     "ColorF2Yellow",
     "ColorF3Blue"
   ],
