@@ -8,7 +8,20 @@
   // свой курсор и панель логов и перехватывал стрелки, когда фокус уходил внутрь iframe.
   try { if (window.self !== window.top) return; } catch (e) { return; }
 
-  var VERSION = "0.3.1";
+  // Перенос входа с ПК: страница на ПК открывает https://animelib.org/#tbauth=<base64 от localStorage.auth>
+  try {
+    var mAuth = /^#tbauth=(.+)$/.exec(location.hash);
+    if (mAuth && location.hostname.indexOf("animelib.org") !== -1) {
+      localStorage.setItem("auth", decodeURIComponent(escape(atob(mAuth[1]))));
+      sessionStorage.setItem("tbAuthDone", "1");
+      history.replaceState(null, "", location.pathname + location.search);
+      location.replace(location.pathname + location.search); // перезагрузка уже со входом
+      return;
+    }
+  } catch (e) {}
+
+  var VERSION = "0.4.0";
+  var TRANSFER_URL = "http://192.168.1.100:8000/give.html"; // ВПИШИ IP СВОЕГО ПК
   var SPOOF_UA = true; // поставь false, чтобы проверить без подмены user-agent
   var MAX_LINES = 18;
 
@@ -469,6 +482,16 @@
       return;
     }
 
+    // Синяя (406): открыть страницу переноса входа на ПК
+    if (c === 406) {
+      e.preventDefault();
+      e.stopPropagation();
+      log("перенос входа: открываю " + 192.168.8.162);
+      showToast("Перенос входа с ПК…");
+      setTimeout(function () { location.href = 192.168.8.162; }, 400);
+      return;
+    }
+
     if (!cursorEnabled) return;
 
     if (DIR[c]) {
@@ -519,6 +542,14 @@
 
   log("animelib-tv-fix " + VERSION + " активен (Курсор ВКЛ), UA: " + short(navigator.userAgent, 60));
   log("экран " + screen.width + "x" + screen.height + ", MediaSource: " + !!window.MediaSource);
+
+  try {
+    if (sessionStorage.getItem("tbAuthDone")) {
+      sessionStorage.removeItem("tbAuthDone");
+      log("вход перенесён с ПК");
+      setTimeout(function () { showToast("Вход перенесён с ПК"); }, 1500);
+    }
+  } catch (e) {}
 
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", mount);
   else mount();
