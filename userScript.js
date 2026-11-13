@@ -21,7 +21,7 @@
   } catch (e) {}
 
   var VERSION = "0.4.0";
-  var TRANSFER_URL = "http://192.168.1.100:8000/give.html"; // ВПИШИ IP СВОЕГО ПК
+  var TRANSFER_URL = "http://192.168.8.162:8000/give.html";
   var SPOOF_UA = true; // поставь false, чтобы проверить без подмены user-agent
   var MAX_LINES = 18;
 
@@ -486,9 +486,9 @@
     if (c === 406) {
       e.preventDefault();
       e.stopPropagation();
-      log("перенос входа: открываю " + 192.168.8.162);
+      log("перенос входа: открываю " + TRANSFER_URL);
       showToast("Перенос входа с ПК…");
-      setTimeout(function () { location.href = 192.168.8.162; }, 400);
+      setTimeout(function () { location.href = TRANSFER_URL; }, 400);
       return;
     }
 
