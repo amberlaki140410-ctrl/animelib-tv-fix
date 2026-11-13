@@ -6,7 +6,16 @@
 
   // Только в главном окне. Во вложенных iframe (капча, плееры) второй экземпляр рисовал
   // свой курсор и панель логов и перехватывал стрелки, когда фокус уходил внутрь iframe.
-  try { if (window.self !== window.top) return; } catch (e) { return; }
+  var IN_IFRAME = true;
+  try { IN_IFRAME = window.self !== window.top; } catch (e) {}
+  if (IN_IFRAME) {
+    // Внутри iframe (плеер Kodik и т.п.): только команды видео от главного окна
+    window.addEventListener("message", function (e) {
+      var d = e.data;
+      if (d && typeof d === "object" && ["toggle", "play", "pause", "ff", "rw"].indexOf(d.tbCmd) !== -1) videoCommand(d.tbCmd);
+    });
+    return;
+  }
 
   // Перенос входа с ПК: страница на ПК открывает https://animelib.org/#tbauth=<base64 от localStorage.auth>
   try {
@@ -20,7 +29,7 @@
     }
   } catch (e) {}
 
-  var VERSION = "0.4.0";
+  var VERSION = "0.5.0";
   var TRANSFER_URL = "http://192.168.8.162:8000/give.html";
   var SPOOF_UA = true; // поставь false, чтобы проверить без подмены user-agent
   var MAX_LINES = 18;
@@ -29,7 +38,7 @@
   var lastMsg = "";
   var box = null;
   var toggleLogBtn = null;
-  var logsVisible = true;
+  var logsVisible = false;
   var toastEl = null;
   var toastTimer = null;
 
@@ -78,13 +87,8 @@
 
   function toggleLogs() {
     logsVisible = !logsVisible;
-    if (box) {
-      box.style.display = logsVisible ? "block" : "none";
-    }
-    if (toggleLogBtn) {
-      toggleLogBtn.textContent = logsVisible ? "[X] Скрыть логи" : "[Показать логи]";
-      toggleLogBtn.style.opacity = logsVisible ? "0.9" : "0.45";
-    }
+    if (box) box.style.display = logsVisible ? "block" : "none";
+    showToast("Логи: " + (logsVisible ? "ВКЛ" : "ВЫКЛ") + " (Зелёная)");
   }
 
   // =========================================================================
@@ -137,28 +141,13 @@
       box.style.cssText =
         "position:fixed;left:8px;bottom:42px;z-index:2147483645;max-width:72vw;margin:0;" +
         "padding:8px 12px;background:rgba(0,0,0,.82);color:#9f9;font:15px/1.25 monospace;" +
-        "white-space:pre-wrap;word-break:break-all;pointer-events:none;border-radius:6px;";
+        "white-space:pre-wrap;word-break:break-all;pointer-events:none;border-radius:6px;display:none;";
     }
     if (!box.isConnected) {
       root.appendChild(box);
       render();
     }
 
-    if (!toggleLogBtn) {
-      toggleLogBtn = document.createElement("button");
-      toggleLogBtn.type = "button";
-      toggleLogBtn.textContent = "[X] Скрыть логи";
-      toggleLogBtn.style.cssText =
-        "position:fixed;left:8px;bottom:8px;z-index:2147483646;margin:0;padding:5px 12px;" +
-        "background:#1b1b1b;color:#9f9;border:1px solid #4a4;border-radius:5px;" +
-        "font:bold 13px monospace;cursor:pointer;opacity:0.9;";
-      toggleLogBtn.addEventListener("click", function (ev) {
-        ev.preventDefault();
-        ev.stopPropagation();
-        toggleLogs();
-      });
-    }
-    if (!toggleLogBtn.isConnected) root.appendChild(toggleLogBtn);
 
     if (!cursorEl) {
       x = Math.round((window.innerWidth || 1920) / 2);
@@ -189,11 +178,11 @@
     if (cursorEnabled) {
       cursorEl.style.setProperty("display", "block", "important");
       placeCursor();
-      showToast("Курсор: ВКЛЮЧЕН (Play/Pause — выкл)");
+      showToast("Курсор: ВКЛЮЧЕН (Красная — выкл)");
       log("курсор: ВКЛ");
     } else {
       cursorEl.style.setProperty("display", "none", "important");
-      showToast("Курсор: ВЫКЛЮЧЕН (Стандартный пульт)");
+      showToast("Курсор: ВЫКЛЮЧЕН (Красная — вкл)");
       log("курсор: ВЫКЛ");
     }
   }
@@ -330,6 +319,160 @@
   }
 
 
+  // =========================================================================
+  // ВИДЕО, ПРОКРУТКА КАК КОЛЕСОМ МЫШИ, АДБЛОК
+  // =========================================================================
+  function findVideo() {
+    var best = null, bestScore = -1;
+    var vids = document.querySelectorAll("video");
+    for (var i = 0; i < vids.length; i++) {
+      var r = vids[i].getBoundingClientRect();
+      var score = Math.max(0, r.width) * Math.max(0, r.height) + (vids[i].paused ? 0 : 1e9);
+      if (score > bestScore) { best = vids[i]; bestScore = score; }
+    }
+    return best;
+  }
+
+  function videoCommand(cmd) {
+    var v = findVideo();
+    if (!v) return false;
+    var p;
+    if (cmd === "toggle") { if (v.paused) p = v.play(); else v.pause(); }
+    else if (cmd === "play") p = v.play();
+    else if (cmd === "pause") v.pause();
+    else if (cmd === "ff") v.currentTime = Math.min(v.duration || 1e9, v.currentTime + 10);
+    else if (cmd === "rw") v.currentTime = Math.max(0, v.currentTime - 10);
+    if (p && p.catch) p.catch(function () {});
+    return true;
+  }
+
+  function mediaKey(cmd) {
+    if (videoCommand(cmd)) return;
+    // в этом окне видео нет: передаём команду во вложенные iframe (плеер Kodik и т.п.)
+    var fr = document.querySelectorAll("iframe");
+    for (var i = 0; i < fr.length; i++) {
+      try { fr[i].contentWindow.postMessage({ tbCmd: cmd }, "*"); } catch (e) {}
+    }
+    showToast(fr.length ? "Команда отправлена в плеер" : "Видео на странице не найдено");
+  }
+
+  // CH вверх/вниз: прокрутка под курсором, как колесо мыши (цепочка до страницы)
+  function wheelAt(dir) {
+    var px = cursorEnabled ? x : (window.innerWidth || 1920) / 2;
+    var py = cursorEnabled ? y : (window.innerHeight || 1080) / 2;
+    var el = document.elementFromPoint(px, py);
+    if (!el) return;
+    var dy = dir * 360;
+    try {
+      var ev = new WheelEvent("wheel", { bubbles: true, cancelable: true, view: window, clientX: px, clientY: py, deltaY: dy, deltaMode: 0 });
+      if (!el.dispatchEvent(ev)) return; // сайт сам обработал прокрутку
+    } catch (e) {}
+    var cur = el;
+    while (cur && cur !== document.body && cur !== document.documentElement) {
+      var oy = window.getComputedStyle(cur).overflowY;
+      if ((oy === "auto" || oy === "scroll" || oy === "overlay") && cur.scrollHeight > cur.clientHeight + 1) {
+        var atEnd = dir > 0 ? cur.scrollTop + cur.clientHeight >= cur.scrollHeight - 1 : cur.scrollTop <= 0;
+        if (!atEnd) { cur.scrollBy({ top: dy, behavior: "smooth" }); return; }
+      }
+      cur = cur.parentElement;
+    }
+    window.scrollBy({ top: dy, behavior: "smooth" });
+  }
+
+  // Адблок: блок запросов и вставки элементов с рекламных доменов + скрытие типовых рекламных блоков
+  var AD_HOSTS = ["googlesyndication.com", "googleadservices.com", "doubleclick.net", "adservice.google.",
+    "an.yandex.ru", "yandexadexchange.net", "adfox.ru", "adriver.ru", "ad.mail.ru", "exoclick.com",
+    "propellerads.com", "popads.net", "adsterra.com", "hilltopads.net", "juicyads.com", "trafficjunky.com",
+    "mgid.com", "taboola.com", "outbrain.com", "adnxs.com", "criteo.com"];
+  var AD_CSS = ".adsbygoogle,[id^='yandex_rtb'],[id^='adfox'],[class*='adfox'],[id^='div-gpt-ad']," +
+    "iframe[src*='googlesyndication'],iframe[src*='doubleclick'],iframe[src*='adfox'],iframe[src*='yandexadexchange']{display:none!important}";
+  var adblockOn = true, adBlocked = 0, adStyleEl = null;
+  try { adblockOn = localStorage.getItem("tb_adblock") !== "off"; } catch (e) {}
+
+  function isAdUrl(u) {
+    if (!adblockOn || !u) return false;
+    try {
+      var h = new URL(String(u), location.href).hostname;
+      for (var i = 0; i < AD_HOSTS.length; i++) {
+        var a = AD_HOSTS[i];
+        if (a.charAt(a.length - 1) === ".") { if (h.indexOf(a) !== -1) return true; }
+        else if (h === a || h.slice(-(a.length + 1)) === "." + a) return true;
+      }
+    } catch (e) {}
+    return false;
+  }
+
+  function adHit(kind, u) {
+    adBlocked++;
+    log("адблок " + kind + ": " + short(u, 70) + " (всего " + adBlocked + ")");
+  }
+
+  function applyAdStyle() {
+    var parent = document.head || document.documentElement;
+    if (!parent) return;
+    if (adblockOn) {
+      if (!adStyleEl) { adStyleEl = document.createElement("style"); adStyleEl.textContent = AD_CSS; }
+      if (!adStyleEl.isConnected) parent.appendChild(adStyleEl);
+    } else if (adStyleEl && adStyleEl.isConnected) {
+      adStyleEl.remove();
+    }
+  }
+
+  function sweepAds() {
+    if (!adblockOn) return;
+    var nodes = document.querySelectorAll("iframe[src],script[src]");
+    for (var i = 0; i < nodes.length; i++) {
+      if (isAdUrl(nodes[i].src)) { adHit(nodes[i].tagName.toLowerCase(), nodes[i].src); nodes[i].remove(); }
+    }
+  }
+
+  function toggleAdblock() {
+    adblockOn = !adblockOn;
+    try { localStorage.setItem("tb_adblock", adblockOn ? "on" : "off"); } catch (e) {}
+    applyAdStyle();
+    showToast("Адблок: " + (adblockOn ? "ВКЛ" : "ВЫКЛ") + " (Жёлтая)");
+  }
+
+  try {
+    var adFetch = window.fetch;
+    window.fetch = function (input) {
+      var u = typeof input === "string" ? input : (input && input.url) || "";
+      if (isAdUrl(u)) { adHit("fetch", u); return Promise.reject(new TypeError("blocked")); }
+      return adFetch.apply(this, arguments);
+    };
+    var xhrOpen = XMLHttpRequest.prototype.open, xhrSend = XMLHttpRequest.prototype.send;
+    XMLHttpRequest.prototype.open = function (m, u) {
+      this.__tbAd = isAdUrl(u);
+      if (this.__tbAd) adHit("xhr", u);
+      return xhrOpen.apply(this, arguments);
+    };
+    XMLHttpRequest.prototype.send = function () {
+      if (this.__tbAd) {
+        var self = this;
+        setTimeout(function () { try { self.dispatchEvent(new Event("error")); } catch (e) {} }, 0);
+        return;
+      }
+      return xhrSend.apply(this, arguments);
+    };
+    [["HTMLScriptElement", "script"], ["HTMLIFrameElement", "iframe"], ["HTMLImageElement", "img"]].forEach(function (pair) {
+      var proto = window[pair[0]] && window[pair[0]].prototype;
+      var dsc = proto && Object.getOwnPropertyDescriptor(proto, "src");
+      if (!dsc || !dsc.set) return;
+      Object.defineProperty(proto, "src", {
+        get: dsc.get, configurable: true, enumerable: dsc.enumerable,
+        set: function (v) { if (isAdUrl(v)) { adHit(pair[1], v); return; } dsc.set.call(this, v); }
+      });
+    });
+    var adSetAttr = Element.prototype.setAttribute;
+    Element.prototype.setAttribute = function (n, v) {
+      if (n === "src" && /^(SCRIPT|IFRAME|IMG)$/.test(this.tagName) && isAdUrl(v)) { adHit(this.tagName.toLowerCase(), v); return; }
+      return adSetAttr.apply(this, arguments);
+    };
+  } catch (e) {
+    log("адблок: хуки не поставились: " + e);
+  }
+  applyAdStyle();
+
   // 1. Подмена user-agent (до скриптов сайта, если TizenBrew внедряет код достаточно рано)
   if (SPOOF_UA) {
     try {
@@ -440,63 +583,60 @@
     };
   } catch (e) {}
 
-  // 6. Кнопки пульта
+  // 6. Кнопки пульта (по образцу родного браузера Samsung)
+  // Красная: курсор. Зелёная: логи. Жёлтая: адблок. Синяя: перенос входа с ПК.
+  // CH вверх/вниз: прокрутка под курсором. Назад: как Alt+Влево. Play/Pause/Stop/перемотка: видео.
   var DIR = { 37: "l", 39: "r", 38: "u", 40: "d" };
+  var KNOWN = { 10252: 1, 415: 1, 19: 1, 413: 1, 412: 1, 417: 1, 427: 1, 428: 1, 403: 1, 404: 1, 405: 1, 406: 1, 10009: 1, 65376: 1, 65385: 1 };
 
   window.addEventListener("keydown", function (e) {
     var c = e.keyCode || e.which;
     var now = Date.now();
     var act = document.activeElement;
     var typing = isEditable(act);
+    function eat() { e.preventDefault(); e.stopPropagation(); }
 
-    if (c > 255 && c !== 10252 && c !== 415 && c !== 405 && c !== 413) {
-      log("кнопка " + c + (typing ? " (в поле)" : ""));
-    }
+    if (c > 255 && !KNOWN[c]) log("кнопка " + c + (typing ? " (в поле)" : ""));
 
-    // Play/Pause: включить или выключить курсор
-    if (c === 10252 || c === 415 || c === 19) {
-      e.preventDefault();
-      e.stopPropagation();
-      if (now - lastToggleTime > 500) {
-        lastToggleTime = now;
-        toggleCursorMode();
-      }
-      return;
-    }
-
-    // Жёлтая (405) или Stop (413): скрыть или показать логи
-    if (c === 405 || c === 413) {
-      e.preventDefault();
-      e.stopPropagation();
-      toggleLogs();
-      return;
-    }
-
-    // «Готово»/«Отмена» экранной клавиатуры и «Назад» в поле: снять фокус, вернуть управление курсору
-    if (c === 65376 || c === 65385 || ((c === 10009 || c === 27) && typing)) {
-      if (typing) act.blur();
-      if (typing && (c === 10009 || c === 27)) {
-        e.preventDefault();
-        e.stopPropagation();
-      }
-      return;
-    }
-
-    // Синяя (406): открыть страницу переноса входа на ПК
+    if (c === 403) { eat(); if (!e.repeat && now - lastToggleTime > 400) { lastToggleTime = now; toggleCursorMode(); } return; }
+    if (c === 404) { eat(); if (!e.repeat) toggleLogs(); return; }
+    if (c === 405) { eat(); if (!e.repeat) toggleAdblock(); return; }
     if (c === 406) {
-      e.preventDefault();
-      e.stopPropagation();
-      log("перенос входа: открываю " + TRANSFER_URL);
-      showToast("Перенос входа с ПК…");
-      setTimeout(function () { location.href = TRANSFER_URL; }, 400);
+      eat();
+      if (!e.repeat) {
+        log("перенос входа: открываю " + TRANSFER_URL);
+        showToast("Перенос входа с ПК…");
+        setTimeout(function () { location.href = TRANSFER_URL; }, 400);
+      }
+      return;
+    }
+
+    // Видео: Play/Pause, Play, Pause, Stop (пауза), перемотка вперёд и назад на 10 с
+    if (c === 10252 || c === 415 || c === 19 || c === 413 || c === 417 || c === 412) {
+      eat();
+      var cmd = c === 10252 ? "toggle" : c === 415 ? "play" : (c === 19 || c === 413) ? "pause" : c === 417 ? "ff" : "rw";
+      if (!e.repeat || cmd === "ff" || cmd === "rw") mediaKey(cmd);
+      return;
+    }
+
+    // CH вверх/вниз: колесо мыши под курсором
+    if (c === 427 || c === 428) { eat(); wheelAt(c === 428 ? 1 : -1); return; }
+
+    // «Готово»/«Отмена» экранной клавиатуры: снять фокус с поля
+    if (c === 65376 || c === 65385) { if (typing) act.blur(); return; }
+
+    // Назад: закрыть поле, выйти из полного экрана, иначе как Alt+Влево
+    if (c === 10009 || c === 27) {
+      if (typing) { act.blur(); eat(); return; }
+      if (document.fullscreenElement) { eat(); try { document.exitFullscreen(); } catch (err) {} return; }
+      if (c === 10009 && history.length > 1) { eat(); history.back(); }
       return;
     }
 
     if (!cursorEnabled) return;
 
     if (DIR[c]) {
-      e.preventDefault();
-      e.stopPropagation();
+      eat();
       if (!held[DIR[c]] && !(held.l || held.r || held.u || held.d)) heldSince = now;
       held[DIR[c]] = true;
       lastDirEvent = now;
@@ -509,8 +649,7 @@
         var under = document.elementFromPoint(x, y);
         if (under === act || (under && act.contains(under))) return;
       }
-      e.preventDefault();
-      e.stopPropagation();
+      eat();
       if (!e.repeat) performClick();
     }
   }, true);
@@ -555,6 +694,8 @@
   else mount();
 
   setInterval(function () {
+    applyAdStyle();
+    sweepAds();
     if (!document.body) return;
     mount();
   }, 2000);
