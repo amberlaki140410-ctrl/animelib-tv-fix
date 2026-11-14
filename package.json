@@ -1,8 +1,8 @@
 {
   "name": "animelib-tv-fix",
   "appName": "AnimeLib",
-  "version": "0.6.1",
-  "description": "AnimeLib на Samsung TV: курсор, управление как в родном браузере, адблок, диагностика",
+  "version": "0.6.2",
+  "description": "AnimeLib на Samsung TV: курсор, управление как в родном браузере, адблок, диагностика (финал)",
   "packageType": "mods",
   "websiteURL": "https://animelib.org",
   "main": "userScript.js",
