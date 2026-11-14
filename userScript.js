@@ -29,7 +29,7 @@
     }
   } catch (e) {}
 
-  var VERSION = "0.5.0";
+  var VERSION = "0.5.2";
   var TRANSFER_URL = "http://192.168.8.162:8000/give.html";
   var SPOOF_UA = true; // поставь false, чтобы проверить без подмены user-agent
   var MAX_LINES = 18;
@@ -64,8 +64,15 @@
     render();
   }
 
+  function uiHost() {
+    var fs = document.fullscreenElement || document.webkitFullscreenElement;
+    // внутри <video>, <iframe> и т.п. дочерние элементы в полном экране не рисуются
+    if (fs && !/^(VIDEO|IFRAME|IMG|CANVAS)$/.test(fs.tagName)) return fs;
+    return document.body || document.documentElement;
+  }
+
   function showToast(text) {
-    var root = document.body || document.documentElement;
+    var root = uiHost();
     if (!root) return;
     if (!toastEl) {
       toastEl = document.createElement("div");
@@ -77,6 +84,7 @@
         "pointer-events:none!important;transition:opacity 0.25s ease!important;opacity:0!important;";
       root.appendChild(toastEl);
     }
+    if (toastEl.parentNode !== root) root.appendChild(toastEl);
     toastEl.textContent = text;
     toastEl.style.setProperty("opacity", "1", "important");
     clearTimeout(toastTimer);
@@ -103,6 +111,19 @@
   var heldSince = 0, lastDirEvent = 0, keyupSeen = false;
   var isPointer = false, lastUnder = null, lastHoverT = 0, lastFrameT = 0;
   var hoverDirty = false, edgeAcc = 0, hotX = 7, hotY = 4, lastToggleTime = 0;
+  var HIDE_AFTER_MS = 5000;   // через сколько без движения курсор скрывается
+  var lastActivity = Date.now(), cursorHidden = false;
+
+  // Показать курсор после скрытия; возвращает true, если он был скрыт
+  function wake() {
+    lastActivity = Date.now();
+    var was = cursorHidden;
+    if (cursorHidden) {
+      cursorHidden = false;
+      if (cursorEl) cursorEl.style.setProperty("opacity", "1", "important");
+    }
+    return was;
+  }
 
   var SPEED_MIN = 240;   // px/с при коротком нажатии (точное наведение)
   var SPEED_MAX = 1500;  // px/с при долгом удержании
@@ -133,7 +154,7 @@
   }
 
   function mount() {
-    var root = document.body || document.documentElement;
+    var root = uiHost();
     if (!root) return;
 
     if (!box) {
@@ -143,7 +164,7 @@
         "padding:8px 12px;background:rgba(0,0,0,.82);color:#9f9;font:15px/1.25 monospace;" +
         "white-space:pre-wrap;word-break:break-all;pointer-events:none;border-radius:6px;display:none;";
     }
-    if (!box.isConnected) {
+    if (box.parentNode !== root) {
       root.appendChild(box);
       render();
     }
@@ -157,12 +178,12 @@
       cursorEl.style.cssText =
         "position:fixed!important;top:0!important;left:0!important;width:36px!important;height:36px!important;" +
         "z-index:2147483647!important;pointer-events:none!important;user-select:none!important;" +
-        "will-change:transform!important;filter:drop-shadow(0 3px 6px rgba(0,0,0,0.75))!important;" +
+        "will-change:transform!important;filter:drop-shadow(0 3px 6px rgba(0,0,0,0.75))!important;transition:opacity 0.25s ease!important;" +
         "display:" + (cursorEnabled ? "block" : "none") + "!important;";
       cursorEl.innerHTML = SVG_ARROW;
       placeCursor();
     }
-    if (!cursorEl.isConnected) root.appendChild(cursorEl);
+    if (cursorEl.parentNode !== root) root.appendChild(cursorEl);
   }
 
   function releaseAll() {
@@ -177,11 +198,13 @@
     releaseAll();
     if (cursorEnabled) {
       cursorEl.style.setProperty("display", "block", "important");
+      wake();
       placeCursor();
       showToast("Курсор: ВКЛЮЧЕН (Красная — выкл)");
       log("курсор: ВКЛ");
     } else {
       cursorEl.style.setProperty("display", "none", "important");
+      changeHover(null);
       showToast("Курсор: ВЫКЛЮЧЕН (Красная — вкл)");
       log("курсор: ВЫКЛ");
     }
@@ -218,18 +241,67 @@
     } catch (e) {}
   }
 
+  function ancestors(el) {
+    var a = [];
+    while (el) { a.push(el); el = el.parentElement; }
+    return a;
+  }
+
+  function fireMouse(el, type, rel, bubbles) {
+    try {
+      el.dispatchEvent(new MouseEvent(type, { bubbles: bubbles, cancelable: true, view: window, clientX: x, clientY: y, relatedTarget: rel || null }));
+    } catch (e) {}
+  }
+
+  function firePointer(el, type, rel, bubbles) {
+    if (!window.PointerEvent) return;
+    try {
+      el.dispatchEvent(new PointerEvent(type, { bubbles: bubbles, cancelable: true, view: window, clientX: x, clientY: y, relatedTarget: rel || null, pointerId: 1, pointerType: "mouse", isPrimary: true }));
+    } catch (e) {}
+  }
+
+  // Как настоящая мышь: при смене элемента под курсором старому уходят out/leave, новому over/enter
+  function changeHover(next) {
+    var prev = lastUnder;
+    if (prev === next) return;
+    var pa = prev ? ancestors(prev) : [];
+    var na = next ? ancestors(next) : [];
+    var i;
+    if (prev) {
+      firePointer(prev, "pointerout", next, true);
+      fireMouse(prev, "mouseout", next, true);
+      for (i = 0; i < pa.length; i++) {
+        if (na.indexOf(pa[i]) === -1) {
+          firePointer(pa[i], "pointerleave", next, false);
+          fireMouse(pa[i], "mouseleave", next, false);
+        }
+      }
+    }
+    if (next) {
+      firePointer(next, "pointerover", prev, true);
+      fireMouse(next, "mouseover", prev, true);
+      for (i = na.length - 1; i >= 0; i--) {
+        if (pa.indexOf(na[i]) === -1) {
+          firePointer(na[i], "pointerenter", prev, false);
+          fireMouse(na[i], "mouseenter", prev, false);
+        }
+      }
+    }
+    lastUnder = next;
+  }
+
   function hover(now) {
     if (now - lastHoverT < 80) return;
     lastHoverT = now;
     var el = document.elementFromPoint(x, y); // курсор с pointer-events:none, его скрывать не нужно
     if (!el) return;
     if (el !== lastUnder) {
-      lastUnder = el;
       var c = isInteractive(el);
       if (c !== isPointer) { isPointer = c; setIcon(); }
-      fire(el, "mouseover");
+      changeHover(el);
     }
-    fire(el, "mousemove");
+    firePointer(el, "pointermove", null, true);
+    fireMouse(el, "mousemove", null, true);
   }
 
   function scrollUnderCursor(dy) {
@@ -246,6 +318,12 @@
     var any = held.l || held.r || held.u || held.d;
     // страховка, если пульт не присылает keyup
     if (any && now - lastDirEvent > (keyupSeen ? 2500 : 260)) { releaseAll(); any = false; }
+
+    if (any || vx || vy) lastActivity = now;
+    if (!cursorHidden && cursorEl && now - lastActivity > HIDE_AFTER_MS) {
+      cursorHidden = true;
+      cursorEl.style.setProperty("opacity", "0", "important");
+    }
 
     var tx = 0, ty = 0;
     if (any) {
@@ -300,6 +378,7 @@
   function performClick() {
     var el = document.elementFromPoint(x, y);
     if (!el) return;
+    setTimeout(function () { hoverDirty = true; }, 250);
     var act = document.activeElement;
     // клик мимо поля ввода снимает с него фокус
     if (isEditable(act) && act !== el && !act.contains(el)) act.blur();
@@ -358,6 +437,8 @@
 
   // CH вверх/вниз: прокрутка под курсором, как колесо мыши (цепочка до страницы)
   function wheelAt(dir) {
+    setTimeout(function () { hoverDirty = true; }, 150);
+    setTimeout(function () { hoverDirty = true; }, 500);
     var px = cursorEnabled ? x : (window.innerWidth || 1920) / 2;
     var py = cursorEnabled ? y : (window.innerHeight || 1080) / 2;
     var el = document.elementFromPoint(px, py);
@@ -639,11 +720,14 @@
       eat();
       if (!held[DIR[c]] && !(held.l || held.r || held.u || held.d)) heldSince = now;
       held[DIR[c]] = true;
+      wake();
       lastDirEvent = now;
       return;
     }
 
     if (c === 13) {
+      if (!typing && cursorHidden) { wake(); eat(); return; }
+      wake();
       // Enter в поле, когда курсор стоит над этим же полем: обычное поведение, без повторного клика
       if (typing) {
         var under = document.elementFromPoint(x, y);
@@ -692,6 +776,14 @@
 
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", mount);
   else mount();
+
+  ["fullscreenchange", "webkitfullscreenchange"].forEach(function (ev) {
+    document.addEventListener(ev, function () {
+      var fs = document.fullscreenElement || document.webkitFullscreenElement;
+      log("полный экран: " + (fs ? fs.tagName : "выкл"));
+      mount();
+    });
+  });
 
   setInterval(function () {
     applyAdStyle();
