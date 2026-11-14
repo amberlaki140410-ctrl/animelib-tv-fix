@@ -29,7 +29,7 @@
     }
   } catch (e) {}
 
-  var VERSION = "0.6.1";
+  var VERSION = "0.6.2";
   var TRANSFER_URL = "http://192.168.8.162:8000/give.html";
   var SPOOF_UA = true; // поставь false, чтобы проверить без подмены user-agent
   var MAX_LINES = 18;
@@ -51,7 +51,7 @@
   }
 
   function render() {
-    if (box) box.textContent = lines.join("\n");
+    if (box && logsVisible) box.textContent = lines.join("\n");
   }
 
   function log(msg) {
@@ -96,6 +96,7 @@
   function toggleLogs() {
     logsVisible = !logsVisible;
     if (box) box.style.display = logsVisible ? "block" : "none";
+    if (logsVisible) render();
     showToast("Логи: " + (logsVisible ? "ВКЛ" : "ВЫКЛ") + " (Зелёная)");
   }
 
@@ -120,8 +121,12 @@
     var was = cursorHidden;
     if (cursorHidden) {
       cursorHidden = false;
-      if (cursorEl) cursorEl.style.setProperty("opacity", "1", "important");
+      if (cursorEl) {
+        cursorEl.style.setProperty("display", cursorEnabled ? "block" : "none", "important");
+        cursorEl.style.setProperty("opacity", "1", "important");
+      }
     }
+    kick();
     return was;
   }
 
@@ -178,7 +183,7 @@
       cursorEl.style.cssText =
         "position:fixed!important;top:0!important;left:0!important;width:36px!important;height:36px!important;" +
         "z-index:2147483647!important;pointer-events:none!important;user-select:none!important;" +
-        "will-change:transform!important;filter:drop-shadow(0 3px 6px rgba(0,0,0,0.75))!important;transition:opacity 0.25s ease!important;" +
+        "will-change:transform!important;transition:opacity 0.25s ease!important;" +
         "display:" + (cursorEnabled ? "block" : "none") + "!important;";
       cursorEl.innerHTML = SVG_ARROW;
       placeCursor();
@@ -323,6 +328,9 @@
     if (!cursorHidden && cursorEl && now - lastActivity > HIDE_AFTER_MS) {
       cursorHidden = true;
       cursorEl.style.setProperty("opacity", "0", "important");
+      setTimeout(function () {
+        if (cursorHidden && cursorEl) cursorEl.style.setProperty("display", "none", "important");
+      }, 320);
     }
 
     var tx = 0, ty = 0;
@@ -368,11 +376,28 @@
     }
   }
 
+  var loopQueued = false, idleTimer = 0;
+
+  function queueLoop() {
+    if (loopQueued) return;
+    loopQueued = true;
+    requestAnimationFrame(loop);
+  }
+
+  // Разбудить цикл сразу (нажата кнопка), не дожидаясь очередной проверки в простое
+  function kick() {
+    if (idleTimer) { clearTimeout(idleTimer); idleTimer = 0; }
+    queueLoop();
+  }
+
   function loop(ts) {
+    loopQueued = false;
     var dt = lastFrameT ? Math.min((ts - lastFrameT) / 1000, 0.05) : 0.016;
     lastFrameT = ts;
     if (cursorEnabled) step(dt, Date.now());
-    requestAnimationFrame(loop);
+    var active = held.l || held.r || held.u || held.d || vx || vy || hoverDirty;
+    if (active) queueLoop();
+    else idleTimer = setTimeout(function () { idleTimer = 0; queueLoop(); }, 150);
   }
 
   function performClick() {
@@ -634,6 +659,17 @@
     });
   }
 
+  // Статистика воспроизведения раз в 10 секунд, пока видео идёт: потерянные кадры, буфер, число ожиданий
+  var waitCount = 0;
+  setInterval(function () {
+    var v = findVideo();
+    if (!v || v.paused || v.ended) return;
+    var q = v.getVideoPlaybackQuality ? v.getVideoPlaybackQuality() : null;
+    var buf = v.buffered && v.buffered.length ? v.buffered.end(v.buffered.length - 1) - v.currentTime : 0;
+    log("статистика: кадров=" + (q ? q.totalVideoFrames : "н/д") + " потеряно=" + (q ? q.droppedVideoFrames : "н/д") +
+      " буфер=" + buf.toFixed(0) + "с ожиданий=" + waitCount + " t=" + v.currentTime.toFixed(0));
+  }, 10000);
+
   // 1. Подмена user-agent (до скриптов сайта, если TizenBrew внедряет код достаточно рано)
   if (SPOOF_UA) {
     try {
@@ -682,6 +718,7 @@
       if (ev === "loadstart" || ev === "error") info += " src=" + short(v.currentSrc || v.src || "", 80);
       log("video: " + info);
       if (ev === "playing") audioReport(v);
+      if (ev === "waiting") waitCount++;
     }, true);
   });
 
@@ -853,7 +890,7 @@
 
   window.addEventListener("blur", releaseAll);
 
-  requestAnimationFrame(loop);
+  queueLoop();
 
   // Если клавиатурный фокус ушёл в iframe (капча и т.п.), стрелки перестают доходить до курсора.
   setInterval(function () {
