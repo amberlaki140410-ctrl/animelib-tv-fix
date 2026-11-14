@@ -29,7 +29,7 @@
     }
   } catch (e) {}
 
-  var VERSION = "0.6.0";
+  var VERSION = "0.6.1";
   var TRANSFER_URL = "http://192.168.8.162:8000/give.html";
   var SPOOF_UA = true; // поставь false, чтобы проверить без подмены user-agent
   var MAX_LINES = 18;
@@ -622,6 +622,18 @@
   }
   applyAdStyle();
 
+  // Диагностика звука: через 3 и 8 секунд после старта пишет в лог, глушит ли плеер и декодирует ли ТВ звук
+  function audioReport(v) {
+    [3000, 8000].forEach(function (ms) {
+      setTimeout(function () {
+        var ad = v.webkitAudioDecodedByteCount, vd = v.webkitVideoDecodedByteCount;
+        log("звук: muted=" + v.muted + " vol=" + (typeof v.volume === "number" ? v.volume.toFixed(2) : "?") +
+          " звук_декод=" + (ad === undefined ? "н/д" : ad) + " видео_декод=" + (vd === undefined ? "н/д" : vd) +
+          " дорожек=" + (v.audioTracks ? v.audioTracks.length : "н/д") + " t=" + v.currentTime.toFixed(1));
+      }, ms);
+    });
+  }
+
   // 1. Подмена user-agent (до скриптов сайта, если TizenBrew внедряет код достаточно рано)
   if (SPOOF_UA) {
     try {
@@ -669,6 +681,7 @@
       if (ev === "error" && v.error) info += " code=" + v.error.code + " " + (v.error.message || "");
       if (ev === "loadstart" || ev === "error") info += " src=" + short(v.currentSrc || v.src || "", 80);
       log("video: " + info);
+      if (ev === "playing") audioReport(v);
     }, true);
   });
 
