@@ -12,7 +12,7 @@
     // Внутри iframe (плеер Kodik и т.п.): только команды видео от главного окна
     window.addEventListener("message", function (e) {
       var d = e.data;
-      if (d && typeof d === "object" && ["toggle", "play", "pause", "ff", "rw"].indexOf(d.tbCmd) !== -1) videoCommand(d.tbCmd);
+      if (d && typeof d === "object" && ["toggle", "play", "pause", "ff", "rw", "skip", "back"].indexOf(d.tbCmd) !== -1) videoCommand(d.tbCmd);
     });
     return;
   }
@@ -29,7 +29,7 @@
     }
   } catch (e) {}
 
-  var VERSION = "0.5.2";
+  var VERSION = "0.6.0";
   var TRANSFER_URL = "http://192.168.8.162:8000/give.html";
   var SPOOF_UA = true; // поставь false, чтобы проверить без подмены user-agent
   var MAX_LINES = 18;
@@ -421,12 +421,26 @@
     else if (cmd === "pause") v.pause();
     else if (cmd === "ff") v.currentTime = Math.min(v.duration || 1e9, v.currentTime + 10);
     else if (cmd === "rw") v.currentTime = Math.max(0, v.currentTime - 10);
+    else if (cmd === "skip") v.currentTime = Math.min(v.duration || 1e9, v.currentTime + 85); // пропуск опенинга, секунды можно поменять
+    else if (cmd === "back") v.currentTime = Math.max(0, v.currentTime - 85);
     if (p && p.catch) p.catch(function () {});
-    return true;
+    return v;
+  }
+
+  function fmtTime(t) {
+    t = Math.max(0, Math.floor(t || 0));
+    var m = Math.floor(t / 60), sec = t % 60;
+    return m + ":" + (sec < 10 ? "0" : "") + sec;
   }
 
   function mediaKey(cmd) {
-    if (videoCommand(cmd)) return;
+    var v = videoCommand(cmd);
+    if (v) {
+      var label = { toggle: v.paused ? "Пауза" : "Воспроизведение", play: "Воспроизведение", pause: "Пауза",
+        ff: "+10 с", rw: "−10 с", skip: "Пропуск опенинга +85 с", back: "Назад −85 с" }[cmd];
+      showToast(label + "   " + fmtTime(v.currentTime) + (isFinite(v.duration) ? " / " + fmtTime(v.duration) : ""));
+      return;
+    }
     // в этом окне видео нет: передаём команду во вложенные iframe (плеер Kodik и т.п.)
     var fr = document.querySelectorAll("iframe");
     for (var i = 0; i < fr.length; i++) {
@@ -435,7 +449,58 @@
     showToast(fr.length ? "Команда отправлена в плеер" : "Видео на странице не найдено");
   }
 
-  // CH вверх/вниз: прокрутка под курсором, как колесо мыши (цепочка до страницы)
+  // CH вверх/вниз: прокрутка того, что под курсором, как колесо мыши.
+  // Упёрлись в край этой области: останавливаемся, соседние области и страницу не трогаем.
+  var scrollAnim = { el: null, target: 0, raf: 0, last: 0 };
+
+  function getPos(el) { return el === window ? (window.pageYOffset || 0) : el.scrollTop; }
+  function getMax(el) {
+    return el === window
+      ? Math.max(0, document.documentElement.scrollHeight - window.innerHeight)
+      : Math.max(0, el.scrollHeight - el.clientHeight);
+  }
+  function setPos(el, v) {
+    try {
+      if (el === window) window.scrollTo({ top: v, behavior: "instant" });
+      else el.scrollTo({ top: v, behavior: "instant" });
+    } catch (e) {
+      if (el === window) window.scrollTo(0, v); else el.scrollTop = v;
+    }
+  }
+
+  function scrollTick(ts) {
+    var a = scrollAnim;
+    var dt = a.last ? Math.min((ts - a.last) / 1000, 0.05) : 0.016;
+    a.last = ts;
+    var pos = getPos(a.el);
+    var diff = a.target - pos;
+    if (Math.abs(diff) < 1) { setPos(a.el, a.target); a.raf = 0; a.last = 0; return; }
+    var step = diff * (1 - Math.exp(-dt * 14));      // быстрый старт, мягкое торможение
+    if (Math.abs(step) < 1) step = diff > 0 ? 1 : -1;
+    setPos(a.el, pos + step);
+    a.raf = requestAnimationFrame(scrollTick);
+  }
+
+  // Быстрые нажатия складываются в одну цель, поэтому прокрутка не сбивается и не отстаёт
+  function scrollSmooth(el, delta) {
+    var a = scrollAnim;
+    if (a.el !== el || !a.raf) { a.el = el; a.target = getPos(el); }
+    a.target = Math.min(getMax(el), Math.max(0, a.target + delta));
+    if (!a.raf) { a.last = 0; a.raf = requestAnimationFrame(scrollTick); }
+  }
+
+  // Курсор над видео (или над iframe-плеером)?
+  function cursorOverVideo() {
+    var px = cursorEnabled ? x : (window.innerWidth || 1920) / 2;
+    var py = cursorEnabled ? y : (window.innerHeight || 1080) / 2;
+    var el = document.elementFromPoint(px, py);
+    if (el && el.tagName === "IFRAME") return true;
+    var v = findVideo();
+    if (!v) return false;
+    var r = v.getBoundingClientRect();
+    return r.width > 100 && px >= r.left && px <= r.right && py >= r.top && py <= r.bottom;
+  }
+
   function wheelAt(dir) {
     setTimeout(function () { hoverDirty = true; }, 150);
     setTimeout(function () { hoverDirty = true; }, 500);
@@ -448,16 +513,19 @@
       var ev = new WheelEvent("wheel", { bubbles: true, cancelable: true, view: window, clientX: px, clientY: py, deltaY: dy, deltaMode: 0 });
       if (!el.dispatchEvent(ev)) return; // сайт сам обработал прокрутку
     } catch (e) {}
-    var cur = el;
+
+    var scroller = null, cur = el;
     while (cur && cur !== document.body && cur !== document.documentElement) {
       var oy = window.getComputedStyle(cur).overflowY;
-      if ((oy === "auto" || oy === "scroll" || oy === "overlay") && cur.scrollHeight > cur.clientHeight + 1) {
-        var atEnd = dir > 0 ? cur.scrollTop + cur.clientHeight >= cur.scrollHeight - 1 : cur.scrollTop <= 0;
-        if (!atEnd) { cur.scrollBy({ top: dy, behavior: "smooth" }); return; }
-      }
+      if ((oy === "auto" || oy === "scroll" || oy === "overlay") && cur.scrollHeight > cur.clientHeight + 1) { scroller = cur; break; }
       cur = cur.parentElement;
     }
-    window.scrollBy({ top: dy, behavior: "smooth" });
+    var target = scroller || window;
+    var pos = getPos(target), max = getMax(target);
+    if ((dir > 0 && pos >= max - 1) || (dir < 0 && pos <= 0)) return; // дальше некуда: стоим
+    var h = target === window ? (window.innerHeight || 1080) : target.clientHeight;
+    var step = target === window ? h * 0.4 : Math.max(100, Math.min(360, h * 0.5));
+    scrollSmooth(target, dir * step);
   }
 
   // Адблок: блок запросов и вставки элементов с рекламных доменов + скрытие типовых рекламных блоков
@@ -668,6 +736,7 @@
   // Красная: курсор. Зелёная: логи. Жёлтая: адблок. Синяя: перенос входа с ПК.
   // CH вверх/вниз: прокрутка под курсором. Назад: как Alt+Влево. Play/Pause/Stop/перемотка: видео.
   var DIR = { 37: "l", 39: "r", 38: "u", 40: "d" };
+  var lastCh = { dir: 0, t: 0 }, chHinted = false;
   var KNOWN = { 10252: 1, 415: 1, 19: 1, 413: 1, 412: 1, 417: 1, 427: 1, 428: 1, 403: 1, 404: 1, 405: 1, 406: 1, 10009: 1, 65376: 1, 65385: 1 };
 
   window.addEventListener("keydown", function (e) {
@@ -701,7 +770,27 @@
     }
 
     // CH вверх/вниз: колесо мыши под курсором
-    if (c === 427 || c === 428) { eat(); wheelAt(c === 428 ? 1 : -1); return; }
+    if (c === 427 || c === 428) {
+      eat();
+      var dir = c === 428 ? 1 : -1;
+      // Над видео: двойное нажатие. CH вверх дважды: +85 с, CH вниз дважды: -85 с
+      if (cursorOverVideo()) {
+        if (!e.repeat) {
+          if (lastCh.dir === dir && now - lastCh.t < 350) {
+            lastCh.t = 0;
+            mediaKey(dir < 0 ? "skip" : "back");
+          } else {
+            lastCh.dir = dir;
+            lastCh.t = now;
+            if (!chHinted) { chHinted = true; showToast("Дважды быстро: ±85 с"); }
+          }
+        }
+        return;
+      }
+      lastCh.t = 0;
+      wheelAt(dir);
+      return;
+    }
 
     // «Готово»/«Отмена» экранной клавиатуры: снять фокус с поля
     if (c === 65376 || c === 65385) { if (typing) act.blur(); return; }
